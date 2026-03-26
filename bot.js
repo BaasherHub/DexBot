@@ -21,7 +21,7 @@ const CONFIG = {
   SOL_PRICE_USD:          150,
 
   // Filters
-  FAST_REJECT_SOL:     0.5,   // Instantly drop anything under 0.5 SOL — no API call
+  FAST_REJECT_SOL: parseInt(process.env.MIN_LIQUIDITY_SOL) || 5, // Match full filter — no API calls below this
   MIN_LIQUIDITY_SOL:   5,     // Full filter minimum
   REQUIRE_MINT_REVOKED: true,
   MAX_TOP10_WALLET_PCT: 30,
