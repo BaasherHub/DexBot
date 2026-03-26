@@ -10,7 +10,6 @@
   "dependencies": {
     "@solana/web3.js": "^1.87.6",
     "node-fetch": "^3.3.2",
-    "ws": "^8.16.0",
     "dotenv": "^16.3.1"
   }
 }
