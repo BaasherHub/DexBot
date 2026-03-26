@@ -324,7 +324,7 @@ function startListener() {
       }
     } catch (e) {}
     sigProcessing = false;
-    if (sigQueue.length > 0) setTimeout(processSigQueue, 300); // max ~3 getTransaction/sec
+    if (sigQueue.length > 0) setTimeout(processSigQueue, 600); // max ~3 getTransaction/sec
   }
 
   connection.onLogs(
