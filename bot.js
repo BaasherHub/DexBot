@@ -33,7 +33,7 @@ const CONFIG = {
   MAX_HOLD_MINUTES:   30,
 
   // Rate limiting
-  QUEUE_DELAY_MS:  2000,   // 1 token per 2 seconds max
+  QUEUE_DELAY_MS: parseInt(process.env.QUEUE_DELAY_MS) || 5000,   // 1 token per 2 seconds max
   DEDUP_TTL_MS:    60000,  // Forget seen tokens after 60s
 
   PUMP_FUN_PROGRAM_ID: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
@@ -300,28 +300,41 @@ function startListener() {
     `TP1: +${CONFIG.TAKE_PROFIT_1_PCT}% | TP2: +${CONFIG.TAKE_PROFIT_2_PCT}% | Stop: ${CONFIG.STOP_LOSS_PCT}%`
   );
 
+  // Signature queue — throttles getTransaction calls to avoid 429s
+  const sigQueue = [];
+  let sigProcessing = false;
+
+  async function processSigQueue() {
+    if (sigProcessing || sigQueue.length === 0) return;
+    sigProcessing = true;
+    const signature = sigQueue.shift();
+    try {
+      const tx = await connection.getTransaction(signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
+      if (tx) {
+        const mintAddress = tx.transaction.message.staticAccountKeys?.[1]?.toString();
+        if (mintAddress) {
+          const pre  = tx.meta?.preBalances  || [];
+          const post = tx.meta?.postBalances || [];
+          const liq  = parseFloat(Math.abs((post[0] - pre[0]) / 1e9).toFixed(4));
+          onNewTokenRaw(mintAddress, liq);
+        }
+      }
+    } catch (e) {}
+    sigProcessing = false;
+    if (sigQueue.length > 0) setTimeout(processSigQueue, 300); // max ~3 getTransaction/sec
+  }
+
   connection.onLogs(
     new PublicKey(CONFIG.PUMP_FUN_PROGRAM_ID),
-    async ({ logs, signature }) => {
-      try {
-        const isNew = logs.some(l => l.includes("InitializeMint") || l.includes("Create") || l.includes("initialize"));
-        if (!isNew) return;
-
-        const tx = await connection.getTransaction(signature, {
-          commitment: "confirmed",
-          maxSupportedTransactionVersion: 0,
-        });
-        if (!tx) return;
-
-        const mintAddress = tx.transaction.message.staticAccountKeys?.[1]?.toString();
-        if (!mintAddress) return;
-
-        const pre  = tx.meta?.preBalances  || [];
-        const post = tx.meta?.postBalances || [];
-        const liq  = parseFloat(Math.abs((post[0] - pre[0]) / 1e9).toFixed(4));
-
-        onNewTokenRaw(mintAddress, liq);
-      } catch (e) {}
+    ({ logs, signature }) => {
+      const isNew = logs.some(l => l.includes("InitializeMint") || l.includes("Create") || l.includes("initialize"));
+      if (!isNew) return;
+      if (sigQueue.length > 20) return; // Drop if queue too long — old events are stale anyway
+      sigQueue.push(signature);
+      if (!sigProcessing) processSigQueue();
     },
     "confirmed"
   );
