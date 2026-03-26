@@ -95,25 +95,7 @@ async function sendTelegram(message) {
   } catch (e) { console.error("Telegram error:", e.message); }
 }
 
-// ── DEXSCREENER — FETCH DEX PAID TOKENS ──────────────────────────────────────
-async function fetchDexPaidTokens() {
-  try {
-    // DexScreener boosted/paid tokens endpoint
-    const res  = await fetch("https://api.dexscreener.com/token-boosts/latest/v1");
-    const data = await res.json();
 
-    if (!Array.isArray(data)) return [];
-
-    // Filter for Solana only
-    return data.filter(token =>
-      token.chainId === "solana" &&
-      token.tokenAddress
-    );
-  } catch (e) {
-    console.error("DexScreener fetch error:", e.message);
-    return [];
-  }
-}
 
 // ── DEXSCREENER — FETCH TOKEN DETAILS ────────────────────────────────────────
 async function fetchTokenDetails(mintAddress) {
