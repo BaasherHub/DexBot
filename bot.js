@@ -99,13 +99,53 @@ async function runRugcheck(mintAddress) {
   } catch (e) { return null; }
 }
 
-async function getTokenPrice(mintAddress) {
+// ── PUMP.FUN BONDING CURVE PRICE (real-time, no indexer needed) ──────────────
+const PUMP_PROGRAM_ID  = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+const PUMP_CURVE_SEED  = Buffer.from("bonding-curve");
+const SOL_DECIMALS     = 1e9;
+const TOKEN_DECIMALS   = 1e6;
+const VIRTUAL_SOL_RESERVES_OFFSET  = 40;
+const VIRTUAL_TOKEN_RESERVES_OFFSET = 48;
+
+function findBondingCurveAddress(mintPubkey) {
+  return PublicKey.findProgramAddressSync(
+    [PUMP_CURVE_SEED, mintPubkey.toBuffer()],
+    PUMP_PROGRAM_ID
+  )[0];
+}
+
+async function getPumpFunPrice(mintAddress) {
   try {
-    const res  = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`);
-    const data = await res.json();
-    const pair = data?.pairs?.[0];
-    return { priceUsd: parseFloat(pair?.priceUsd || 0) };
-  } catch (e) { return null; }
+    const mintPubkey  = new PublicKey(mintAddress);
+    const curveAddr   = findBondingCurveAddress(mintPubkey);
+    const accountInfo = await connection.getAccountInfo(curveAddr);
+    if (!accountInfo?.data) return null;
+
+    const data = accountInfo.data;
+    // Read u64 values from the bonding curve account data
+    const virtualSolReserves   = Number(data.readBigUInt64LE(VIRTUAL_SOL_RESERVES_OFFSET))  / SOL_DECIMALS;
+    const virtualTokenReserves = Number(data.readBigUInt64LE(VIRTUAL_TOKEN_RESERVES_OFFSET)) / TOKEN_DECIMALS;
+    if (virtualTokenReserves === 0) return null;
+
+    const priceInSol = virtualSolReserves / virtualTokenReserves;
+    const solPriceUsd = CONFIG.SOL_PRICE_USD;
+    const priceUsd   = priceInSol * solPriceUsd;
+
+    return { priceUsd, priceInSol, virtualSolReserves, virtualTokenReserves };
+  } catch (e) {
+    // Fallback to DexScreener if bonding curve fetch fails
+    try {
+      const res  = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`);
+      const data = await res.json();
+      const pair = data?.pairs?.[0];
+      const priceUsd = parseFloat(pair?.priceUsd || 0);
+      return priceUsd > 0 ? { priceUsd, priceInSol: null } : null;
+    } catch (e2) { return null; }
+  }
+}
+
+async function getTokenPrice(mintAddress) {
+  return getPumpFunPrice(mintAddress);
 }
 
 async function runFilters(mintAddress, liquiditySol) {
@@ -201,14 +241,18 @@ async function closeTrade(trade, exitPrice, pnlPct, reason) {
   const todays = paperTrades.filter(t => t.status === "closed" && new Date(t.exitTime).toDateString() === today);
   const wins   = todays.filter(t => t.pnlUsd > 0).length;
 
+  const closeAxiom = `https://axiom.trade/t/${trade.mintAddress}`;
+  const closeDex   = `https://dexscreener.com/solana/${trade.mintAddress}`;
+  const closePump  = `https://pump.fun/coin/${trade.mintAddress}`;
   await sendTelegram(
     `${pnlUsd > 0 ? "🟢" : "🔴"} <b>TRADE CLOSED — ${reason}</b>\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
     `<code>${trade.mintAddress.slice(0,16)}...</code>\n` +
     `PnL: ${pnlUsd >= 0 ? "+" : ""}$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(1)}%)\n` +
     `━━━━━━━━━━━━━━━━━━\n` +
     `Today: ${todays.length} trades | ${wins}W ${todays.length - wins}L\n` +
-    `All-time: ${totalPaperPnL >= 0 ? "+" : ""}$${totalPaperPnL.toFixed(2)}\n` +
-    `<a href="https://dexscreener.com/solana/${trade.mintAddress}">Chart</a>`
+    `All-time: ${totalPaperPnL >= 0 ? "+" : ""}$${totalPaperPnL.toFixed(2)}\n\n` +
+    `<a href="${closePump}">Pump.fun</a> | <a href="${closeAxiom}">Axiom</a> | <a href="${closeDex}">DexScreener</a>`
   );
 }
 
@@ -240,13 +284,18 @@ async function processQueue() {
       const priceData  = await getTokenPrice(mintAddress);
       const entryPrice = priceData?.priceUsd || 0;
       await enterPaperTrade(mintAddress, liquiditySol, entryPrice);
+      const axiomUrl  = `https://axiom.trade/t/${mintAddress}`;
+      const pumpUrl   = `https://pump.fun/coin/${mintAddress}`;
       await sendTelegram(
         `🟢 <b>PAPER TRADE ENTERED</b>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
         `<code>${mintAddress}</code>\n\n` +
-        `💰 $${CONFIG.PAPER_TRADE_AMOUNT_USD} | 📈 $${entryPrice.toFixed(8)} | 💧 ${liquiditySol} SOL\n\n` +
-        `${summary}\n\n` +
-        `🎯 TP1 +${CONFIG.TAKE_PROFIT_1_PCT}% | TP2 +${CONFIG.TAKE_PROFIT_2_PCT}% | 🛑 ${CONFIG.STOP_LOSS_PCT}%\n` +
-        `<a href="${rugUrl}">Rugcheck</a> | <a href="${dexUrl}">Chart</a>`
+        `💰 Sim: $${CONFIG.PAPER_TRADE_AMOUNT_USD}\n` +
+        `📈 Entry: $${entryPrice > 0 ? entryPrice.toFixed(10) : "fetching..."}\n` +
+        `💧 Liquidity: ${liquiditySol} SOL\n\n` +
+        `<b>Filters:</b>\n${summary}\n\n` +
+        `🎯 TP1 +${CONFIG.TAKE_PROFIT_1_PCT}% | TP2 +${CONFIG.TAKE_PROFIT_2_PCT}% | 🛑 ${CONFIG.STOP_LOSS_PCT}%\n\n` +
+        `<a href="${pumpUrl}">Pump.fun</a> | <a href="${axiomUrl}">Axiom</a> | <a href="${dexUrl}">DexScreener</a> | <a href="${rugUrl}">Rugcheck</a>`
       );
     }
   } catch (e) { console.error("Queue error:", e.message); }
