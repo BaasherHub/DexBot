@@ -8,7 +8,6 @@
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import fetch from "node-fetch";
-import WebSocket from "ws";
 import dotenv from "dotenv";
 import fs from "fs";
 
@@ -432,72 +431,18 @@ async function processToken(mintAddress) {
   );
 }
 
-// ── WEBSOCKET — REAL-TIME DEX PAID FEED ──────────────────────────────────────
-const DEX_WS_URL = "wss://io.dexscreener.com/dex/screener/pairs/h24/1?rankBy[key]=boostScore&rankBy[order]=desc&filters[chainIds][0]=solana";
-
-function startWebSocket() {
-  console.log("📡 Connecting to DexScreener WebSocket...");
-  const ws = new WebSocket(DEX_WS_URL, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      "Origin": "https://dexscreener.com",
-    }
-  });
-
-  let pingInterval;
-
-  ws.on("open", () => {
-    console.log("✅ DexScreener WebSocket connected — listening for DEX Paid events");
-
-    // Heartbeat every 30s to keep connection alive
-    pingInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.ping();
-      }
-    }, 30000);
-  });
-
-  ws.on("message", async (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-
-      // DexScreener sends pairs array — look for boosted/paid ones
-      const pairs = msg?.pairs || msg?.data?.pairs || [];
-      if (!Array.isArray(pairs) || pairs.length === 0) return;
-
-      for (const pair of pairs) {
-        // Only process Solana pairs with boost/paid status
-        if (pair.chainId !== "solana") continue;
-        const mintAddress = pair.baseToken?.address;
-        if (!mintAddress) continue;
-
-        // boostScore > 0 means DEX Paid
-        const boostScore = pair.boostData?.score || pair.boostScore || 0;
-        if (boostScore <= 0) continue;
-
-        // Fire instantly
-        processToken(mintAddress).catch(e =>
-          console.error(`Process error ${mintAddress}:`, e.message)
-        );
-      }
-    } catch (e) {
-      // Silently skip malformed messages
-    }
-  });
-
-  ws.on("error", (err) => {
-    console.error("WebSocket error:", err.message);
-  });
-
-  ws.on("close", (code) => {
-    console.log(`WebSocket closed (${code}) — reconnecting in 5s...`);
-    clearInterval(pingInterval);
-    setTimeout(startWebSocket, 5000);
-  });
-
-  ws.on("pong", () => {
-    // Connection alive
-  });
+// ── FETCH LATEST DEX PAID TOKENS (Official API) ───────────────────────────────
+async function fetchDexPaidTokens() {
+  try {
+    const res  = await fetch("https://api.dexscreener.com/token-boosts/latest/v1");
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    // Filter Solana only
+    return data.filter(t => t.chainId === "solana" && t.tokenAddress);
+  } catch (e) {
+    console.error("DexScreener API error:", e.message);
+    return [];
+  }
 }
 
 // ── MAIN START ────────────────────────────────────────────────────────────────
@@ -505,7 +450,7 @@ async function startPolling() {
   connection = new Connection(CONFIG.RPC_URL, "confirmed");
 
   console.log("🚀 DEX Paid Paper Trading Bot started");
-  console.log(`📡 Mode: Real-time WebSocket (fires instantly on DEX Paid)`);
+  console.log(`📡 Mode: Official DexScreener API — polling every 10s`);
   console.log(`💵 Paper trade amount: $${CONFIG.PAPER_TRADE_AMOUNT_USD}`);
   console.log(`🎯 TP1: +${CONFIG.TP1_PCT}% | TP2: +${CONFIG.TP2_PCT}% | SL: ${CONFIG.STOP_LOSS_PCT}%`);
   console.log(`📲 Telegram: ${CONFIG.TELEGRAM_TOKEN ? "ON" : "OFF"}\n`);
@@ -520,7 +465,7 @@ async function startPolling() {
   await sendTelegram(
     `🚀 <b>DEX Paid Paper Bot Started</b>\n` +
     `━━━━━━━━━━━━━━━━━━\n` +
-    `📡 Mode: Real-time (instant alerts)\n` +
+    `📡 Polling every 10s (official API)\n` +
     `Per trade: $${CONFIG.PAPER_TRADE_AMOUNT_USD}\n` +
     `Min liquidity: $${CONFIG.MIN_LIQUIDITY_USD.toLocaleString()}\n` +
     `TP1: +${CONFIG.TP1_PCT}% | TP2: +${CONFIG.TP2_PCT}%\n` +
@@ -530,8 +475,25 @@ async function startPolling() {
 
   scheduleDailySummary();
 
-  // Start real-time WebSocket
-  startWebSocket();
+  // Fast poll loop — every 10 seconds
+  let scanCount = 0;
+  while (true) {
+    scanCount++;
+    try {
+      const tokens = await fetchDexPaidTokens();
+      if (tokens.length > 0) {
+        console.log(`🔄 Scan #${scanCount} — ${tokens.length} DEX Paid tokens found`);
+        for (const token of tokens) {
+          processToken(token.tokenAddress).catch(e =>
+            console.error(`Process error ${token.tokenAddress}:`, e.message)
+          );
+        }
+      }
+    } catch (e) {
+      console.error("Poll error:", e.message);
+    }
+    await new Promise(r => setTimeout(r, 10000)); // 10 second intervals
+  }
 }
 
 // ── DAILY SUMMARY ─────────────────────────────────────────────────────────────
