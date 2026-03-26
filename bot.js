@@ -24,11 +24,11 @@ const CONFIG = {
   PAPER_TRADE_AMOUNT_USD: 5,
   SOL_PRICE_USD: parseFloat(process.env.SOL_PRICE_USD) || 150,
 
-  // Filters
-  MIN_LIQUIDITY_USD:    1000,   // Min $1000 liquidity
-  REQUIRE_MINT_REVOKED: true,
-  REQUIRE_FREEZE_REVOKED: true,
-  MAX_TOP10_WALLET_PCT: 30,
+  // Filters — relaxed since DEX Paid is already a quality signal
+  MIN_LIQUIDITY_USD:      500,    // Lowered to $500 — DEX Paid devs are serious
+  REQUIRE_MINT_REVOKED:   false,  // Don't require — bonding curve coins haven't revoked yet
+  REQUIRE_FREEZE_REVOKED: false,  // Same reason
+  MAX_TOP10_WALLET_PCT:   60,     // Raised to 60% — early coins naturally concentrated
 
   // Exit strategy
   TP1_PCT:          30,    // Alert: sell 50%
@@ -187,20 +187,27 @@ async function runFilters(mintAddress, liquidity) {
   // Rugcheck
   const rug = await runRugcheck(mintAddress);
   if (rug) {
-    if (CONFIG.REQUIRE_MINT_REVOKED && !rug.mintRevoked) {
-      filters.push(`❌ Mint NOT revoked`); passed = false;
-    } else { filters.push(`✅ Mint revoked`); }
+    // Mint revoked — show as info only (bonding curve coins rarely revoked yet)
+    filters.push(rug.mintRevoked ? `✅ Mint revoked` : `⚠️ Mint not revoked (bonding curve)`);
 
-    if (CONFIG.REQUIRE_FREEZE_REVOKED && !rug.freezeRevoked) {
-      filters.push(`❌ Freeze NOT revoked`); passed = false;
-    } else { filters.push(`✅ Freeze revoked`); }
+    // Freeze revoked — show as info only
+    filters.push(rug.freezeRevoked ? `✅ Freeze revoked` : `⚠️ Freeze not revoked`);
 
+    // Top holders — only hard block if extreme concentration
     if (rug.topHoldersPct > CONFIG.MAX_TOP10_WALLET_PCT) {
       filters.push(`❌ Top holders: ${rug.topHoldersPct.toFixed(1)}% (max ${CONFIG.MAX_TOP10_WALLET_PCT}%)`);
       passed = false;
-    } else { filters.push(`✅ Top holders: ${rug.topHoldersPct.toFixed(1)}%`); }
+    } else {
+      filters.push(`✅ Top holders: ${rug.topHoldersPct.toFixed(1)}%`);
+    }
 
     filters.push(rug.lpLocked ? `✅ LP locked >80%` : `⚠️ LP not locked`);
+
+    // Hard block: if Rugcheck score is extremely high (clear scam)
+    if (rug.score > 900) {
+      filters.push(`❌ Rugcheck score: ${rug.score} (very high risk)`);
+      passed = false;
+    }
   } else {
     filters.push(`⚠️ Rugcheck unavailable`);
   }
