@@ -18,21 +18,52 @@ COINGECKO_API_KEY = os.environ.get("COINGECKO_API_KEY", "")  # optional pro key
 HEADERS = {"User-Agent": "CryptoScoutBot/1.0"}
 
 
-# ── 1. CoinGecko: recently added coins ────────────────────────────────────────
+# ── 1. New coins via CoinMarketCap RSS (free, no key) ────────────────────────
 async def fetch_new_coingecko_coins() -> list[dict]:
-    url = "https://api.coingecko.com/api/v3/coins/list/new"
-    headers = HEADERS.copy()
-    if COINGECKO_API_KEY:
-        headers["x-cg-pro-api-key"] = COINGECKO_API_KEY
+    """
+    Pulls recently added coins from two free sources:
+    - CoinGecko /coins/list (last N entries are newest)
+    - CoinMarketCap new listings RSS
+    """
+    results = []
+
+    # Source A: CoinGecko full list — tail = most recently added
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.get(url, headers=headers)
+            r = await client.get(
+                "https://api.coingecko.com/api/v3/coins/list",
+                headers=HEADERS,
+                timeout=20,
+            )
             r.raise_for_status()
-            coins = r.json()  # [{id, symbol, name, activated_at}, ...]
-            return coins[:30]
+            all_coins = r.json()
+            for c in all_coins[-30:]:
+                results.append({"name": c.get("name"), "symbol": c.get("symbol", "").upper()})
     except Exception as e:
-        log.warning(f"CoinGecko new coins error: {e}")
-        return []
+        log.warning(f"CoinGecko list error: {e}")
+
+    # Source B: CoinMarketCap new listings RSS
+    try:
+        import re
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            r = await client.get(
+                "https://coinmarketcap.com/new/",
+                headers=HEADERS,
+            )
+            # extract coin names from page title patterns
+            titles = re.findall(r'"name":"([^"]{3,40})"', r.text)
+            symbols = re.findall(r'"symbol":"([A-Z0-9]{2,10})"', r.text)
+            seen = set()
+            for name, sym in zip(titles[:20], symbols[:20]):
+                key = sym
+                if key not in seen:
+                    seen.add(key)
+                    results.append({"name": name, "symbol": sym})
+    except Exception as e:
+        log.warning(f"CMC new listings error: {e}")
+
+    log.info(f"Fetched {len(results)} new coin entries")
+    return results[:40]
 
 
 async def fetch_coingecko_trending() -> list[dict]:
