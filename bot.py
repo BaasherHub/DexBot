@@ -175,11 +175,10 @@ async def send_telegram(text: str):
     chunks = [text[i : i + 4000] for i in range(0, len(text), 4000)]
     async with httpx.AsyncClient(timeout=20) as client:
         for i, chunk in enumerate(chunks):
-            prefix = f"📡 *Crypto Scout — {datetime.now().strftime('%b %d, %Y')}*\n\n" if i == 0 else ""
+            prefix = f"📡 Crypto Scout — {datetime.now().strftime('%b %d, %Y')}\n\n" if i == 0 else ""
             payload = {
                 "chat_id": TELEGRAM_CHAT_ID,
                 "text": prefix + chunk,
-                "parse_mode": "Markdown",
                 "disable_web_page_preview": True,
             }
             r = await client.post(url, json=payload)
@@ -191,7 +190,7 @@ async def send_telegram(text: str):
 # ── 5. Main daily job ─────────────────────────────────────────────────────────
 async def daily_scout():
     log.info("Starting daily crypto scout...")
-    await send_telegram("🔍 _Scanning for new projects... report incoming in ~30 seconds._")
+    await send_telegram("🔍 Scanning for new projects... report incoming in ~30 seconds.")
 
     new_coins, trending, headlines = await asyncio.gather(
         fetch_new_coingecko_coins(),
