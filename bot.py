@@ -141,17 +141,23 @@ TRENDING ON COINGECKO TODAY:
 LATEST CRYPTO NEWS HEADLINES:
 {headlines}
 
-Using this data plus your knowledge, identify 3–5 of the most compelling projects. For each project provide:
+Using this data plus your knowledge, identify 3-5 of the most compelling projects. For each project provide:
 
-1. **Name & Ticker**
-2. **What it does** (2–3 sentences, plain English)
-3. **Why it's interesting now** (catalyst, recent launch, milestone)
-4. **Tokenomics snapshot** (total supply, circulating %, FDV if known, unlock schedule if notable)
-5. **Airdrop / Points program** (if active — how to participate)
-6. **Risk factors** (be honest, 1–2 lines)
-7. **Where to research more** (DEXScreener link or CoinGecko link if available)
+1. Name & Ticker
+2. What it does (2-3 sentences, plain English)
+3. Why it is interesting now (catalyst, recent launch, milestone)
+4. Tokenomics snapshot (total supply, circulating %, FDV if known, unlock schedule if notable)
+5. Airdrop / Points program (if active, how to participate)
+6. Risk factors (be honest, 1-2 lines)
+7. Where to research more (DEXScreener or CoinGecko URL as plain text)
 
-Format each project clearly with headers. Be concise but substantive. Do NOT recommend memecoins or projects with no real product. This is for a trader who does his own research — give him the raw intel, not generic advice."""
+CRITICAL FORMATTING - output goes to Telegram as plain text, no Markdown rendering:
+- NO asterisks, NO hashtags, NO backticks, NO bracket links
+- Use CAPS for labels: WHAT IT DOES / TOKENOMICS / AIRDROP / RISKS / LINKS
+- Separate projects with: ------------------------------
+- Use emoji for structure: 🔹 project title, 📊 tokenomics, 🪂 airdrop, ⚠️ risks, 🔗 links
+- Write URLs as plain text only
+- No memecoins, no vaporware. Raw intel for a DYOR trader."""
 
 
 async def run_claude_research(prompt: str) -> str:
